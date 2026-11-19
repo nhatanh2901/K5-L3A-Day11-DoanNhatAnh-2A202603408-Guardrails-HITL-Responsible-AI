@@ -6,6 +6,7 @@ Checkpoint 2 — Output Guardrails
 """
 import re
 import textwrap
+import unicodedata
 
 from google.genai import types
 from google.adk.agents import llm_agent
@@ -13,6 +14,7 @@ from google.adk import runners
 from google.adk.plugins import base_plugin
 
 from core.utils import chat_with_agent
+from core.config import DEMO_SECRETS
 
 
 # ============================================================
@@ -37,22 +39,31 @@ def content_filter(response: str) -> dict:
         dict with 'safe', 'issues', and 'redacted' keys
     """
     issues = []
+    response = "".join(c for c in unicodedata.normalize("NFKC", response)
+                       if unicodedata.category(c) != "Cf")
     redacted = response
 
     # PII patterns to check
     PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
+        "phone": r"(?<!\w)(?:0|\+84)(?:[ .-]?\d){9,10}(?!\w)",
+        "email": r"[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}",
+        "national_id": r"\b(?:\d{9}|\d{12})\b",
+        "api_key": r"\bsk-[a-zA-Z0-9_-]+",
+        "password": r"(?:password|mật\s*khẩu)\s*(?::|=|\bis\b|là)\s*[^\s,;]+",
+        "db_host": r"\b[\w.-]+\.internal(?::\d+)?",
     }
 
     for name, pattern in PII_PATTERNS.items():
         matches = re.findall(pattern, response, re.IGNORECASE)
         if matches:
             issues.append(f"{name}: {len(matches)} found")
+            redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+
+    for secret in DEMO_SECRETS:
+        # Match split/obfuscated values without leaking them into issue labels.
+        pattern = r"[\W_]*".join(re.escape(c) for c in secret if c.isalnum())
+        if pattern and re.search(pattern, redacted, re.IGNORECASE):
+            issues.append("protected_value: found")
             redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
 
     return {
@@ -181,7 +192,20 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         #    - Increment self.blocked_count
         # 3. Return llm_response (possibly modified)
 
-        return llm_response  # TODO: modify if needed
+        result = content_filter(response_text)
+        if not result["safe"]:
+            self.redacted_count += 1
+            llm_response.content = types.Content(
+                role="model", parts=[types.Part.from_text(text=result["redacted"])]
+            )
+        if self.use_llm_judge:
+            verdict = await llm_safety_check(result["redacted"])
+            if not verdict["safe"]:
+                self.blocked_count += 1
+                llm_response.content = types.Content(role="model", parts=[
+                    types.Part.from_text(text="Response blocked by safety review. Please ask a banking question.")
+                ])
+        return llm_response
 
 
 # ============================================================

@@ -37,6 +37,9 @@ from agents.security_boundary import contains_secret, normalize_for_security
 from core.config import (
     DEMO_SECRETS,
     PROVIDER_GEMINI,
+    PROVIDER_GROQ,
+    GROQ_BASE_URL,
+    get_groq_api_key,
     get_red_model,
     get_red_provider,
 )
@@ -229,6 +232,14 @@ def require_nemo():
 
 
 def _model_entry(provider: str, model: str) -> dict:
+    if provider == PROVIDER_GROQ:
+        if not os.environ.get("GROQ_API_KEY"):
+            os.environ["GROQ_API_KEY"] = get_groq_api_key()
+        return {
+            "type": "main", "engine": "openai", "model": model,
+            "api_key_env_var": "GROQ_API_KEY",
+            "parameters": {"base_url": GROQ_BASE_URL},
+        }
     if provider == PROVIDER_GEMINI:
         return {
             "type": "main",

@@ -1,5 +1,66 @@
 # Day 11 — Controlled Agent Security (2026)
 
+## Bài làm — Đoàn Nhật Anh
+
+**API thay thế theo yêu cầu:** CP4 hỗ trợ `RED_TEAM_PROVIDER=groq` và
+`GROQ_MODEL=openai/gpt-oss-20b`, dùng `GROQ_API_KEY` (nhận cả alias
+`GROUQ_API_KEY`). Model chính và NeMo đều dùng cùng Groq API. Các prompt,
+secret demo và rule phòng thủ giữ nguyên. Blue vẫn dùng model OpenRouter cố định.
+Kết quả Groq được khai đúng provider/model, kèm `rubric_default_model=false` và
+`requires_coach_approval=true`: cần coach chấp nhận API thay thế trước khi tính
+cho yêu cầu leak trên model mặc định. Kết quả Gemini trước khi đổi API được lưu
+trong `outputs/history/`. Đây không phải bằng chứng leak trên Gemini/OpenAI.
+
+- **Lớp:** K5-L3A · **MSSV:** 2A202603408.
+- CP2: chuẩn hóa Unicode, phát hiện injection trong email/RAG, lọc chủ đề Anh/Việt;
+  output che PII, password, API key, DB host và giá trị secret demo độc lập với nhãn.
+- CP3: sliding window theo user, audit có request ID/latency và che dữ liệu nhạy cảm,
+  monitoring có cảnh báo, egress chỉ cho HTTPS tới `api.vinbank.example` và
+  `cases.vinbank.example` khi payload sạch.
+- Pipeline tự gọi lần lượt RateLimit → Input → LLM Blue → Output. Audit và monitoring
+  bọc toàn bộ request để quan sát cả lần bị chặn trước model. Runner Blue nhận list
+  plugin rỗng vì orchestrator đã gọi các callback; tránh chạy mỗi lớp hai lần.
+- Bộ CP3 có 5 câu an toàn, 8 câu tấn công, 15 request spam và 3 case biên.
+  Spam dùng câu off-topic để kiểm tra rate limiter mà không tốn API; `passed`
+  trong `rate_limit` chỉ đếm lần qua lớp rate limit, vẫn có thể bị input guard chặn.
+- CP4: 5 prompt có ngữ cảnh riêng cho completion, dịch/định dạng, viết truyện,
+  confirmation và leo thang từng bước trong một lượt. Mỗi prompt chạy độc lập,
+  không giả định runner giữ hội thoại giữa các lần gọi.
+  Mỗi lượt có thời hạn 90 giây và lưu kết quả ngay sau khi xong; timeout được
+  ghi là lỗi, không tính là leak hoặc bị guardrail chặn. CLI bỏ câu hỏi smoke
+  riêng trước CP4 để dành API cho 5 prompt được chấm.
+
+**Chạy trên Windows** (từ thư mục gốc, Python 3.10+):
+
+```powershell
+python -m venv .venv
+$env:PYTHONIOENCODING='utf-8'
+.\.venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt
+# Nếu chưa có .env: Copy-Item .env.example .env
+# Điền OPENROUTER_API_KEY và key Red vào .env; không commit file này.
+.\.venv\Scripts\python.exe src/main.py --part 2
+.\.venv\Scripts\python.exe src/main.py --part 3
+.\.venv\Scripts\python.exe src/main.py --part 4
+.\.venv\Scripts\python.exe -m pytest tests/smoke tests/public -q
+.\.venv\Scripts\python.exe scripts/grade.py --submission-dir . --out outputs/grade_report.json
+```
+
+Nếu dùng môi trường `.venv313` đã tạo trên máy này, thay `.venv` bằng `.venv313`.
+Nếu Gemini trả 503/timeout, chạy
+`.\.venv313\Scripts\python.exe scripts/retry_attacks.py --timeout 90`
+để chỉ chạy lại các dòng lỗi API/NeMo, giữ nguyên phản hồi đã thành công.
+Script từ chối trộn bằng chứng nếu provider/model khác lần chạy trước.
+Khi đổi provider, chạy mới `src/main.py --part 4` thay vì retry dữ liệu cũ.
+`results.json` chỉ được ghi sau khi CP3 chạy xong; lỗi API được ghi audit và báo lỗi,
+không thay bằng phản hồi giả. Report do grader sinh. Các bộ lọc là rule cho lab;
+không bảo đảm phát hiện mọi biến thể ngữ nghĩa hoặc PII được mã hóa.
+
+Có sử dụng AI hỗ trợ triển khai và kiểm tra. Khi trình bày bài, cần giải thích được
+thứ tự lớp bảo vệ, sự khác nhau giữa redact và block, cơ chế rate limit,
+egress và mục đích của từng prompt theo `RULES.md`.
+
+---
+
 > 👤 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).  
 > 🎯 **Mục tiêu:** đóng vai **Blue Team** để học cách xây Guardrails phòng thủ, rồi đóng vai **Red Team** để tấn công agent **Red** hoặc **Red Advance**.  
 > ✅ Làm theo **Checkpoint 1 → 5** trong [`CHECKPOINTS.md`](CHECKPOINTS.md) · nộp theo [`SUBMISSION.md`](SUBMISSION.md).
